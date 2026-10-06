@@ -7,10 +7,11 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiohttp import web  # <-- Веб-сервер для Render
 
 # ========== SOZLAMALAR ==========
 TOKEN = os.getenv("TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 # ================================
 
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +37,7 @@ TEXTS = {
     3: (
         "Yillar o‘tdi.\n"
         "Hayot o‘z yo‘liga ketdi.\n"
-        "Va 2–3 oy oldin avtobusda sizni bir marta ko‘rib qoldim.Deyarli o'zgarmagansiz, o'sha o'sha chiroylisz.\n"
+        "Va 2–3 oy oldin avtobusda sizni bir marta ko‘rib qoldim. Deyarli o'zgarmagansiz, o'sha o'sha chiroylisz.\n"
         "Siz esa deyarli meni ko‘rmadingiz.\n"
         "Lekin o‘sha qisqa lahzaning o‘zi yetarli edi —\n"
         "yuragimda g‘alati, ammo tanish bir issiqlik uyg‘ondi,\n"
@@ -55,10 +56,10 @@ TEXTS = {
         "Ular yurakning eng chuqur joyida saqlanadi\n"
         "va faqat vaqt o‘tishi bilan o‘ziga yo‘l topadi.\n"
         "Men bugun shunday hisni ochiq aytishga jur’at etmoqdaman.\n"
-      "Men yaxshi niyyat ila szga ushbu gaplarni aytyabman.\n"
-      "Qalbimda sizga nisbatan hech qanday yomonlik yo'q.\n"
-      "Uchrashishga chaqirganim boisi ham szni yana bir bor ko'rish holos.\n"
-      "Hoh bu uchrashuv 1 soat, hoh bir lahza bolsa ham mayli.\n"
+        "Men yaxshi niyyat ila szga ushbu gaplarni aytyabman.\n"
+        "Qalbimda sizga nisbatan hech qanday yomonlik yo'q.\n"
+        "Uchrashishga chaqirganim boisi ham szni yana bir bor ko'rish holos.\n"
+        "Hoh bu uchrashuv 1 soat, hoh bir lahza bolsa ham mayli.\n"
     ),
     6: (
         "Agar bu xabar sizga og‘ir kelgan bo‘lsa — kechirasiz.\n"
@@ -66,7 +67,7 @@ TEXTS = {
         "Yozishingizni yoki jimligingizni hurmat qilaman.\n"
         "Lekin bilishingizni xohlardim:\n"
         "Mubina siz mening yuragimda maxsus o‘rin egalladingiz.\n"
-      "Bu gaplarni o'zim szga ayta olmadim va shunday qilib sizga bolgan hislarimni yetkazmoqchi boldim holos!"
+        "Bu gaplarni o'zim szga ayta olmadim va shunday qilib sizga bolgan hislarimni yetkazmoqchi boldim holos!"
     )
 }
 
@@ -83,13 +84,17 @@ async def start(message: types.Message, state: FSMContext):
     await state.set_state(Form.step)
     await state.update_data(step=1)
 
-    await bot.send_message(
-        ADMIN_ID,
-        f"🌸 Bot ishga tushirildi!\n"
-        f"Ism: {user.full_name}\n"
-        f"Username: @{user.username if user.username else 'yo‘q'}\n"
-        f"ID: {user.id}"
-    )
+    try:
+        if ADMIN_ID:
+            await bot.send_message(
+                ADMIN_ID,
+                f"🌸 Bot ishga tushirildi!\n"
+                f"Ism: {user.full_name}\n"
+                f"Username: @{user.username if user.username else 'yo‘q'}\n"
+                f"ID: {user.id}"
+            )
+    except Exception as e:
+        logging.error(f"Админга хабар юборишда хатолик: {e}")
 
     await message.answer(TEXTS[1], reply_markup=get_keyboard(1))
 
@@ -100,11 +105,15 @@ async def next_step(callback: types.CallbackQuery, state: FSMContext):
 
     await state.update_data(step=step)
 
-    await bot.send_message(
-        ADMIN_ID,
-        f"📌 U {step}-bosqichni ochdi\n"
-        f"Ism: {user.full_name} | @{user.username if user.username else 'yo‘q'}"
-    )
+    try:
+        if ADMIN_ID:
+            await bot.send_message(
+                ADMIN_ID,
+                f"📌 U {step}-bosqichni ochdi\n"
+                f"Ism: {user.full_name} | @{user.username if user.username else 'yo‘q'}"
+            )
+    except Exception as e:
+        logging.error(f"Админга хабар юборишда хатолик: {e}")
 
     if step == 6:
         await callback.message.edit_text(TEXTS[6], parse_mode="HTML")
@@ -127,12 +136,32 @@ async def forward_message(message: types.Message, state: FSMContext):
             f"ID: {user.id}\n\n"
             f"Xabar:\n{message.text}"
         )
-        await bot.send_message(ADMIN_ID, text)
+        try:
+            if ADMIN_ID:
+                await bot.send_message(ADMIN_ID, text)
+        except Exception as e:
+            logging.error(f"Админга хабар юборишда хатолик: {e}")
         await message.answer("Xabaring yetkazildi ✅")
     else:
         await message.answer("Iltimos, tugmalardan foydalaning 😊")
 
+# --- Render учун веб-сервер қисми ---
+async def handle(request):
+    return web.Response(text="Bot is running!")
+
+async def web_server():
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info(f"Web server started on port {port}")
+
 async def main():
+    # Веб-сервер ва ботни бир вақтнинг ўзида ишга туширамиз
+    await web_server()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
