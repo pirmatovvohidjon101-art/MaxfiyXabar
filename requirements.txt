@@ -1,2 +1,1 @@
-python-3.12.8
-pydantic>=2.10
+aiogram>=3.0.0
